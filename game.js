@@ -1,3 +1,7 @@
+// ==========================================================================
+// SKINCARE MATCHING GAME - LOGIC & ACCESSIBILITY (UI/UX PRO MAX STANDARD)
+// ==========================================================================
+
 // --- GAME CONFIG & DATA ---
 const maxRounds = 6;
 const pointsPerCorrect = 25;
@@ -41,6 +45,7 @@ const treatments = [
 ];
 
 // --- DOM ELEMENTS ---
+const htmlEl = document.documentElement;
 const board = document.querySelector("#board");
 const bottle = document.querySelector("#bottle");
 const bottleImg = document.querySelector("#bottleImg");
@@ -58,6 +63,7 @@ const resultDesc = document.querySelector("#resultDesc");
 const resultIcon = document.querySelector("#resultIcon");
 const modalRestart = document.querySelector("#modalRestart");
 const soundToggle = document.querySelector("#soundToggle");
+const themeToggle = document.querySelector("#themeToggle");
 const confettiCanvas = document.querySelector("#confettiCanvas");
 
 // --- GAME STATE ---
@@ -68,7 +74,31 @@ let selected = false;
 let solved = new Set();
 let lastId = "";
 let advanceTimer = null;
-let isMuted = false;
+let isMuted = localStorage.getItem("skincare_game_sound_muted") === "true";
+
+// --- THEME MANAGEMENT (DARK / LIGHT MODE) ---
+function initTheme() {
+  const savedTheme = localStorage.getItem("skincare_game_theme");
+  const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+  const initialTheme = savedTheme || (prefersDark ? "dark" : "light");
+  
+  setTheme(initialTheme);
+}
+
+function setTheme(theme) {
+  htmlEl.setAttribute("data-theme", theme);
+  localStorage.setItem("skincare_game_theme", theme);
+  
+  const isDark = theme === "dark";
+  themeToggle.textContent = isDark ? "☀️" : "🌙";
+  themeToggle.title = isDark ? "Chuyển sang chế độ Sáng" : "Chuyển sang chế độ Tối";
+  themeToggle.setAttribute("aria-pressed", isDark ? "true" : "false");
+}
+
+themeToggle.addEventListener("click", () => {
+  const currentTheme = htmlEl.getAttribute("data-theme") || "light";
+  setTheme(currentTheme === "dark" ? "light" : "dark");
+});
 
 // --- WEB AUDIO SYNTHESIZER ---
 let audioCtx = null;
@@ -94,7 +124,7 @@ function playSound(type) {
 
       osc1.type = "sine";
       osc2.type = "triangle";
-      osc1.frequency.setValueAtTime(523.25, now); // C5
+      osc1.frequency.setValueAtTime(523.25, now);     // C5
       osc2.frequency.setValueAtTime(659.25, now + 0.1); // E5
       osc1.frequency.setValueAtTime(783.99, now + 0.2); // G5
 
@@ -147,10 +177,16 @@ function playSound(type) {
   }
 }
 
-soundToggle.addEventListener("click", () => {
-  isMuted = !isMuted;
+function updateSoundUI() {
   soundToggle.textContent = isMuted ? "🔇" : "🔊";
   soundToggle.title = isMuted ? "Bật âm thanh" : "Tắt âm thanh";
+  soundToggle.setAttribute("aria-pressed", isMuted ? "true" : "false");
+}
+
+soundToggle.addEventListener("click", () => {
+  isMuted = !isMuted;
+  localStorage.setItem("skincare_game_sound_muted", isMuted);
+  updateSoundUI();
 });
 
 // --- HELPER FUNCTIONS ---
@@ -179,11 +215,14 @@ function startGame() {
   faces.forEach((face) => {
     const treatment = treatments.find((item) => item.id === face.dataset.id);
     face.classList.remove("active", "correct", "wrong");
+    face.setAttribute("aria-disabled", "false");
     const imgEl = face.querySelector("img");
     if (imgEl && treatment) {
       imgEl.src = treatment.original;
     }
   });
+
+  updateSoundUI();
   nextBottle();
 }
 
@@ -243,6 +282,8 @@ function consumeRound(delayMs) {
 
 function tryMatch(face) {
   if (!current) return;
+  if (face.getAttribute("aria-disabled") === "true") return;
+
   const answered = current;
   current = null;
   const isCorrect = face.dataset.id === answered.id;
@@ -256,6 +297,7 @@ function tryMatch(face) {
       score += pointsPerCorrect;
       solved.add(answered.id);
       face.classList.add("correct");
+      face.setAttribute("aria-disabled", "true");
       const imgEl = face.querySelector("img");
       if (imgEl) imgEl.src = answered.healed;
     }
@@ -288,12 +330,19 @@ function centerOf(element) {
 function drawConnector(face, isCorrect) {
   const start = centerOf(bottle);
   const end = centerOf(face);
+  const isDark = htmlEl.getAttribute("data-theme") === "dark";
+
   const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
   line.setAttribute("x1", start.x);
   line.setAttribute("y1", start.y);
   line.setAttribute("x2", end.x);
   line.setAttribute("y2", end.y);
-  line.setAttribute("stroke", isCorrect ? "#0d9488" : "#f43f5e");
+  
+  const strokeColor = isCorrect
+    ? (isDark ? "#2dd4bf" : "#0d9488")
+    : (isDark ? "#fb7185" : "#f43f5e");
+
+  line.setAttribute("stroke", strokeColor);
   line.setAttribute("stroke-width", "6");
   line.setAttribute("stroke-linecap", "round");
   line.setAttribute("stroke-dasharray", isCorrect ? "0" : "8, 8");
@@ -318,10 +367,12 @@ bottle.addEventListener("dragend", () => {
   bottle.classList.remove("selected");
 });
 
-faces.forEach((face) => {
+faces.forEach((face, index) => {
   face.addEventListener("dragover", (event) => {
     event.preventDefault();
-    face.classList.add("active");
+    if (face.getAttribute("aria-disabled") !== "true") {
+      face.classList.add("active");
+    }
   });
 
   face.addEventListener("dragleave", () => {
@@ -340,10 +391,22 @@ faces.forEach((face) => {
     }
   });
 
+  // KEYBOARD NAVIGATION (ARROW KEYS + SPACE / ENTER)
   face.addEventListener("keydown", (event) => {
-    if (selected && (event.key === "Enter" || event.key === " ")) {
+    if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
-      tryMatch(face);
+      if (selected) {
+        tryMatch(face);
+      }
+    } else if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) {
+      event.preventDefault();
+      let nextIndex = index;
+      if (event.key === "ArrowRight") nextIndex = (index + 1) % faces.length;
+      if (event.key === "ArrowLeft") nextIndex = (index - 1 + faces.length) % faces.length;
+      if (event.key === "ArrowDown") nextIndex = (index + 2) % faces.length;
+      if (event.key === "ArrowUp") nextIndex = (index - 2 + faces.length) % faces.length;
+
+      faces[nextIndex].focus();
     }
   });
 });
@@ -354,7 +417,7 @@ bottle.addEventListener("click", () => {
   selected = !selected;
   bottle.classList.toggle("selected", selected);
   message.textContent = selected
-    ? "Bấm vào khuôn mặt cần điều trị bằng hoạt chất này"
+    ? "Bấm hoặc dùng phím di chuyển vào khuôn mặt cần điều trị bằng hoạt chất này"
     : "Kéo chai thuốc vào đúng khuôn mặt";
   message.className = "message";
 });
@@ -379,20 +442,19 @@ bottle.addEventListener("touchmove", (e) => {
   
   bottle.style.transform = `translate(${deltaX}px, ${deltaY}px) scale(1.05)`;
 
-  // Check card under touch
   const element = document.elementFromPoint(touch.clientX, touch.clientY);
   const card = element ? element.closest(".face-card") : null;
   
   if (activeTouchCard && activeTouchCard !== card) {
     activeTouchCard.classList.remove("active");
   }
-  if (card) {
+  if (card && card.getAttribute("aria-disabled") !== "true") {
     card.classList.add("active");
   }
   activeTouchCard = card;
 }, { passive: true });
 
-bottle.addEventListener("touchend", (e) => {
+bottle.addEventListener("touchend", () => {
   if (!current) return;
   bottle.style.transform = "";
   bottle.classList.remove("selected");
@@ -415,7 +477,7 @@ function triggerConfetti() {
     x: Math.random() * confettiCanvas.width,
     y: Math.random() * confettiCanvas.height - confettiCanvas.height,
     size: Math.random() * 8 + 4,
-    color: ["#0d9488", "#f43f5e", "#f59e0b", "#3b82f6", "#10b981"][Math.floor(Math.random() * 5)],
+    color: ["#0d9488", "#2dd4bf", "#ec4899", "#f59e0b", "#3b82f6"][Math.floor(Math.random() * 5)],
     vx: (Math.random() - 0.5) * 4,
     vy: Math.random() * 4 + 3,
     rotation: Math.random() * 360,
@@ -447,10 +509,10 @@ function triggerConfetti() {
   draw();
 }
 
-// --- EVENT LISTENERS ---
+// --- INITIALIZATION ---
 restart.addEventListener("click", startGame);
 modalRestart.addEventListener("click", startGame);
 window.addEventListener("resize", () => connectorLayer.replaceChildren());
 
-// Start initial game
+initTheme();
 startGame();
